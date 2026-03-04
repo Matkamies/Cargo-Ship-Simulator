@@ -1,0 +1,5 @@
+{
+  "name": "NauticSim: Cargo Navigator",
+  "description": "A physics-based ship simulation game where you navigate a cargo vessel through procedurally generated islands. Balance weight and momentum to reach your destination safely.",
+  "requestFramePermissions": []
+}
