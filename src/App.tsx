@@ -95,7 +95,6 @@ export default function App() {
         }
 
         if (changed) {
-          // Fix floating point precision and snap to zero
           next.throttle = Math.abs(next.throttle) < 0.01 ? 0 : Math.round(next.throttle * 4) / 4;
           next.rudder = Math.abs(next.rudder) < 0.01 ? 0 : Math.round(next.rudder * 10) / 10;
           next.bowThruster = Math.abs(next.bowThruster) < 0.01 ? 0 : Math.round(next.bowThruster * 10) / 10;
@@ -121,7 +120,6 @@ export default function App() {
     setShip(prev => {
       const next = { ...prev };
       
-      // Physics Constants based on Cargo
       const mass = 1.0 + (next.cargo / 100) * 4.0; 
       const inertia = 1.0 + (next.cargo / 100) * 3.0;
       
@@ -131,68 +129,52 @@ export default function App() {
       const waterDrag = 0.9992;
       const angularDrag = 0.985;
 
-      // Current speed for effectiveness calculations
       const currentSpeed = Math.hypot(next.velocity.x, next.velocity.y);
 
-      // Bow thruster effectiveness decreases with speed
-      // Above ~10 knots (speed 20), thrusters are very weak
       const btEffectiveness = Math.max(0.05, 1.0 - (currentSpeed / 20));
       const effectiveBTForce = bowThrusterPower * btEffectiveness;
 
-      // Wind effect (tankers have large surface area, especially on the side)
       const relWindAngle = wind.direction - next.heading;
       const sideImpact = Math.abs(Math.sin(relWindAngle));
-      const frontalImpact = Math.abs(Math.cos(relWindAngle)) * 0.2; // Front is much less affected
+      const frontalImpact = Math.abs(Math.cos(relWindAngle)) * 0.2;
       const totalWindImpact = (sideImpact + frontalImpact) * wind.strength * 0.675 / mass;
       
       const windForceX = Math.cos(wind.direction) * totalWindImpact;
       const windForceY = Math.sin(wind.direction) * totalWindImpact;
 
-      // Calculate forces
       const forceX = Math.cos(next.heading) * next.throttle * enginePower;
       const forceY = Math.sin(next.heading) * next.throttle * enginePower;
 
-      // Bow thruster force
       const btForceX = -Math.sin(next.heading) * next.bowThruster * effectiveBTForce;
       const btForceY = Math.cos(next.heading) * next.bowThruster * effectiveBTForce;
 
-      // Update velocity
       next.velocity.x += (forceX + btForceX + windForceX) * dt;
       next.velocity.y += (forceY + btForceY + windForceY) * dt;
 
-      // "Biting the water" physics:
-      // Decompose velocity into forward and lateral components
       const speed = Math.hypot(next.velocity.x, next.velocity.y);
       const forwardDirX = Math.cos(next.heading);
       const forwardDirY = Math.sin(next.heading);
       const sideDirX = -Math.sin(next.heading);
       const sideDirY = Math.cos(next.heading);
 
-      // Project velocity onto forward and side vectors
       const velForward = next.velocity.x * forwardDirX + next.velocity.y * forwardDirY;
       const velSide = next.velocity.x * sideDirX + next.velocity.y * sideDirY;
 
-      // Apply drag
       let finalVelForward = velForward * waterDrag;
       
-      // Lateral drag increases with speed to "bite" the water
       const lateralBiteFactor = 0.9 + (speed / 50) * 0.08; 
       const lateralDrag = Math.max(0.8, 1.0 - (0.05 * lateralBiteFactor)); 
       let finalVelSide = velSide * lateralDrag;
 
-      // Reconstruct velocity
       next.velocity.x = finalVelForward * forwardDirX + finalVelSide * sideDirX;
       next.velocity.y = finalVelForward * forwardDirY + finalVelSide * sideDirY;
 
-      // Update position
       next.pos.x += next.velocity.x * dt;
       next.pos.y += next.velocity.y * dt;
 
-      // Update rotation
       const rudderSpeedFactor = Math.min(1.0, speed / 35);
       const turnPower = next.rudder * rudderEffectiveness * rudderSpeedFactor;
       
-      // Wind also adds a small torque if not perfectly aligned
       const windAngleDiff = Math.sin(wind.direction - next.heading);
       const windTorque = windAngleDiff * wind.strength * 0.0675 / inertia;
 
@@ -202,20 +184,15 @@ export default function App() {
       next.angularVelocity *= angularDrag;
       next.heading += next.angularVelocity * dt;
 
-      // Fuel consumption
-      // 0.99% per second at full throttle = ~100 seconds for full tank
       const fuelRate = 0.99; 
       const consumption = (Math.abs(next.throttle) + Math.abs(next.bowThruster) * 2) * fuelRate * dt;
       next.fuel = Math.max(0, next.fuel - consumption);
 
       if (next.fuel <= 0 && speed < 1) {
-        // If out of fuel and stopped, game over (or just can't move)
-        // For now, let's just let them drift if they have momentum
         next.throttle = 0;
         next.bowThruster = 0;
       }
 
-      // Update path
       if (lastPathPointRef.current) {
         const dist = Math.hypot(next.pos.x - lastPathPointRef.current.x, next.pos.y - lastPathPointRef.current.y);
         if (dist > 15) {
@@ -224,52 +201,44 @@ export default function App() {
         }
       }
 
-      // Update wake
       if (!next.wake) next.wake = [];
-      const wakeInterval = 6; // Slightly more frequent for smoother look
+      const wakeInterval = 6;
       const lastWakePoint = next.wake[next.wake.length - 1];
       const distSinceLastWake = lastWakePoint ? Math.hypot(next.pos.x - lastWakePoint.pos.x, next.pos.y - lastWakePoint.pos.y) : 100;
       
       if (distSinceLastWake > wakeInterval && speed > 2.0) {
-        const speedFactor = Math.min(1, (speed - 2.0) / 33); // Adjust factor to start at 2kn
+        const speedFactor = Math.min(1, (speed - 2.0) / 33);
         next.wake.push({
           pos: { x: next.pos.x, y: next.pos.y },
           heading: next.heading,
-          opacity: 0.25 * speedFactor, // Dynamic opacity based on speed
-          width: shipWidth * (0.6 + 0.4 * speedFactor) // Slightly wider at speed
+          opacity: 0.25 * speedFactor,
+          width: shipWidth * (0.6 + 0.4 * speedFactor)
         });
       }
 
-      // Fade and prune wake (slowly)
-      // Slowed down by 100% (halved the decay rate)
       next.wake = next.wake.map(w => ({ 
         ...w, 
         opacity: w.opacity - 0.0002 * dt * 60, 
         width: w.width + 0.02 * dt * 60 
       })).filter(w => w.opacity > 0);
 
-      // Collision detection
       if (checkCollision(next.pos, shipRadius, speed, world.islands, world.iceFloes)) {
         setGameState('crashed');
       }
 
-      // Update ice floes
       const updatedIceFloes = updateIceFloes(world.iceFloes, wind, world.islands, next.pos, shipRadius, dt, window.innerWidth, window.innerHeight, Date.now());
       setWorld(prev => prev ? { ...prev, iceFloes: updatedIceFloes } : null);
 
-      // Depth check
       const currentDepth = getDepthAt(next.pos, world.shallowZones);
       const draft = 6 + (next.cargo / 100) * 19;
       if (currentDepth < draft) {
         setGameState('crashed');
       }
 
-      // Out of fuel check
       if (next.fuel <= 0 && speed < 0.1) {
         setGameState('crashed');
       }
 
-      // Check win condition
       if (checkInPort(next.pos, world.endPort) && speed < 4) {
         const initialReward = (next.cargo / 100) * 100000;
         const elapsedTime = (Date.now() - next.startTime) / 1000;
@@ -298,25 +267,20 @@ export default function App() {
 
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-    // Draw Water (Deepest)
-    ctx.fillStyle = '#040a1a'; // Deep nautical blue
+    ctx.fillStyle = '#040a1a';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
 
     const draft = 6 + (ship.cargo / 100) * 19;
 
-    // 1. Draw "Lightening" Glows (Soft radial gradients for depth transition)
-    // Shallower water is lighter blue, using soft gradients as requested
     ctx.save();
-    // Sort zones to draw shallower ones with more priority
     [...world.shallowZones].sort((a, b) => b.depth - a.depth).forEach(zone => {
       const gradient = ctx.createRadialGradient(zone.x, zone.y, 0, zone.x, zone.y, zone.radius);
       const depthFactor = 1 - zone.depth / 35;
       const intensity = 0.6 * Math.pow(depthFactor, 1.1);
       
-      // Pure blue shades only
-      gradient.addColorStop(0, `rgba(37, 99, 235, ${intensity})`); // Bright blue
-      gradient.addColorStop(0.6, `rgba(30, 58, 138, ${intensity * 0.4})`); // Mid blue
-      gradient.addColorStop(1, 'rgba(4, 10, 26, 0)'); // Fade to deep background
+      gradient.addColorStop(0, `rgba(37, 99, 235, ${intensity})`);
+      gradient.addColorStop(0.6, `rgba(30, 58, 138, ${intensity * 0.4})`);
+      gradient.addColorStop(1, 'rgba(4, 10, 26, 0)');
       
       ctx.fillStyle = gradient;
       ctx.beginPath();
@@ -325,15 +289,12 @@ export default function App() {
     });
     ctx.restore();
 
-    // 2. Draw Contour Lines (Irregular shapes, union only)
-    // We use a temporary canvas and 'source-out' to draw ONLY the outer edge of the unioned shapes.
-    // This avoids internal lines AND prevents any color fill leaks (no more purple!).
     const tempCanvas = document.createElement('canvas');
     tempCanvas.width = canvas.width;
     tempCanvas.height = canvas.height;
     const tempCtx = tempCanvas.getContext('2d');
 
-    const drawUnionOutline = (depth: number, color: string, width: number) => {
+    const drawUnionOutline = (depth: number, color: string, width: number, dotted = false) => {
       if (!tempCtx) return;
       tempCtx.clearRect(0, 0, tempCanvas.width, tempCanvas.height);
       
@@ -351,38 +312,36 @@ export default function App() {
         });
       };
 
-      // 1. Fill the entire union area with an opaque color on the temporary canvas
       tempCtx.globalCompositeOperation = 'source-over';
       tempCtx.fillStyle = 'black';
       createPath(tempCtx);
       tempCtx.fill();
 
-      // 2. Use 'source-out' to draw the stroke ONLY where the canvas is currently empty.
-      // Since the union area is filled, the stroke will only be drawn on the OUTSIDE edge.
       tempCtx.globalCompositeOperation = 'source-out';
       tempCtx.strokeStyle = color;
-      tempCtx.lineWidth = width * 2; // Double width because only the outer half is visible
+      tempCtx.lineWidth = width * 2;
+      if (dotted) {
+        tempCtx.setLineDash([2, 8]);
+        tempCtx.lineCap = 'round';
+      } else {
+        tempCtx.setLineDash([]);
+        tempCtx.lineCap = 'butt';
+      }
       createPath(tempCtx);
       tempCtx.stroke();
+      tempCtx.setLineDash([]);
 
-      // 3. Draw the resulting clean outline onto the main canvas
       ctx.drawImage(tempCanvas, 0, 0);
     };
 
-    // 30m Contour (Subtle white/blue)
     drawUnionOutline(30, 'rgba(255, 255, 255, 0.1)', 1);
-    // 20m Contour
     drawUnionOutline(20, 'rgba(255, 255, 255, 0.15)', 1);
-    // 10m Contour
     drawUnionOutline(10, 'rgba(255, 255, 255, 0.2)', 1);
 
-    // 3. Danger Zone (Subtle Red Outline Only)
-    // This now draws ONLY a red line at the boundary. No red fill = no purple water.
     const safetyMargin = 2;
     const dangerDepth = draft + safetyMargin;
-    drawUnionOutline(dangerDepth, 'rgba(239, 68, 68, 0.7)', 1.5);
+    drawUnionOutline(dangerDepth, 'rgba(239, 68, 68, 0.7)', 1.5, true);
 
-    // Draw Grid (Subtle)
     ctx.strokeStyle = 'rgba(255, 255, 255, 0.05)';
     ctx.lineWidth = 1;
     for (let x = 0; x < canvas.width; x += 100) {
@@ -398,7 +357,6 @@ export default function App() {
       ctx.stroke();
     }
 
-    // Draw Ship Path
     if (ship.path.length > 1) {
       ctx.save();
       ctx.strokeStyle = '#38bdf8';
@@ -410,7 +368,6 @@ export default function App() {
       for (let i = 1; i < ship.path.length; i++) {
         ctx.lineTo(ship.path[i].x, ship.path[i].y);
       }
-      // Connect to current ship position (stern)
       const sternX = ship.pos.x - Math.cos(ship.heading) * (shipWidth / 2);
       const sternY = ship.pos.y - Math.sin(ship.heading) * (shipWidth / 2);
       ctx.lineTo(sternX, sternY);
@@ -418,7 +375,6 @@ export default function App() {
       ctx.restore();
     }
 
-    // Draw Ports
     [world.startPort, world.endPort].forEach(port => {
       ctx.fillStyle = port.isDestination ? 'rgba(34, 197, 94, 0.2)' : 'rgba(59, 130, 246, 0.2)';
       ctx.strokeStyle = port.isDestination ? '#22c55e' : '#3b82f6';
@@ -433,29 +389,25 @@ export default function App() {
       ctx.fillText(port.isDestination ? 'DESTINATION PORT' : 'STARTING PORT', port.x + 10, port.y + 20);
     });
 
-    // Draw Islands
     world.islands.forEach(island => {
-      // Draw Rocky Shore
       ctx.beginPath();
       ctx.moveTo(island.x + island.points[0].x, island.y + island.points[0].y);
       island.points.forEach(p => ctx.lineTo(island.x + p.x, island.y + p.y));
       ctx.closePath();
-      ctx.fillStyle = '#64748b'; // Slate gray for rocks
+      ctx.fillStyle = '#64748b';
       ctx.fill();
       ctx.strokeStyle = '#475569';
       ctx.lineWidth = 2;
       ctx.stroke();
 
-      // Draw Green Interior (Vegetation)
       ctx.save();
       ctx.beginPath();
       ctx.moveTo(island.x + island.points[0].x * 0.7, island.y + island.points[0].y * 0.7);
       island.points.forEach(p => ctx.lineTo(island.x + p.x * 0.7, island.y + p.y * 0.7));
       ctx.closePath();
-      ctx.fillStyle = '#166534'; // Dark green
+      ctx.fillStyle = '#166534';
       ctx.fill();
       
-      // Add some "trees" (dots)
       ctx.fillStyle = '#14532d';
       for (let i = 0; i < 5; i++) {
         const tx = island.x + (Math.sin(island.x + i) * island.radius * 0.4);
@@ -467,13 +419,11 @@ export default function App() {
       ctx.restore();
     });
 
-    // Draw Wake
     ship.wake.forEach(w => {
       ctx.save();
       ctx.translate(w.pos.x, w.pos.y);
       ctx.rotate(w.heading);
       
-      // Create a soft gradient for turbulent water effect
       const grad = ctx.createRadialGradient(-w.width/4, 0, 0, -w.width/4, 0, w.width);
       grad.addColorStop(0, `rgba(255, 255, 255, ${w.opacity})`);
       grad.addColorStop(0.5, `rgba(255, 255, 255, ${w.opacity * 0.3})`);
@@ -481,13 +431,11 @@ export default function App() {
       
       ctx.fillStyle = grad;
       ctx.beginPath();
-      // Draw a soft elongated shape for the wake
       ctx.ellipse(-w.width/2, 0, w.width, w.width/3, 0, 0, Math.PI * 2);
       ctx.fill();
       ctx.restore();
     });
 
-    // Draw Ice Floes
     world.iceFloes.forEach(floe => {
       ctx.save();
       ctx.translate(floe.pos.x, floe.pos.y);
@@ -497,16 +445,13 @@ export default function App() {
       floe.points.forEach(p => ctx.lineTo(p.x, p.y));
       ctx.closePath();
       
-      // Ice color: almost white with a slight bluish tint
       ctx.fillStyle = '#f0f9ff'; 
       ctx.fill();
       
-      // Add some detail/shading to the ice
       ctx.strokeStyle = '#e0f2fe';
       ctx.lineWidth = 1;
       ctx.stroke();
       
-      // Subtle inner glow/shadow for depth
       ctx.beginPath();
       ctx.moveTo(floe.points[0].x * 0.8, floe.points[0].y * 0.8);
       floe.points.forEach(p => ctx.lineTo(p.x * 0.8, p.y * 0.8));
@@ -517,29 +462,22 @@ export default function App() {
       ctx.restore();
     });
 
-    // Draw Ship (Tanker Style)
     ctx.save();
     ctx.translate(ship.pos.x, ship.pos.y);
     ctx.rotate(ship.heading);
     
-    // Ship Hull Shadow
     ctx.shadowColor = 'rgba(0, 0, 0, 0.5)';
     ctx.shadowBlur = 8;
     ctx.shadowOffsetY = 3;
 
-    // Tanker Hull (Longer, more rectangular)
-    ctx.fillStyle = '#1e293b'; // Dark hull
+    ctx.fillStyle = '#1e293b';
     ctx.beginPath();
-    // Bow
     ctx.moveTo(shipWidth / 2 + 8, 0);
     ctx.lineTo(shipWidth / 2, -SHIP_HEIGHT / 2);
-    // Port side
     ctx.lineTo(-shipWidth / 2, -SHIP_HEIGHT / 2);
-    // Stern
     ctx.lineTo(-shipWidth / 2 - 2, -SHIP_HEIGHT / 4);
     ctx.lineTo(-shipWidth / 2 - 2, SHIP_HEIGHT / 4);
     ctx.lineTo(-shipWidth / 2, SHIP_HEIGHT / 2);
-    // Starboard side
     ctx.lineTo(shipWidth / 2, SHIP_HEIGHT / 2);
     ctx.closePath();
     ctx.fill();
@@ -547,26 +485,21 @@ export default function App() {
     ctx.shadowBlur = 0;
     ctx.shadowOffsetY = 0;
     
-    // Hull Outline for contrast
-    ctx.strokeStyle = '#64748b'; // Lighter gray for contrast
+    ctx.strokeStyle = '#64748b';
     ctx.lineWidth = 1.5;
     ctx.stroke();
 
-    // Deck (Reddish-brown for tanker)
     ctx.fillStyle = '#451a03';
     ctx.fillRect(-shipWidth / 2 + 2, -SHIP_HEIGHT / 2 + 2, shipWidth - 2, SHIP_HEIGHT - 4);
 
-    // Bridge / Superstructure (At the back for tankers)
     ctx.fillStyle = '#f8fafc';
     ctx.fillRect(-shipWidth / 2 + 4, -SHIP_HEIGHT / 2 + 3, shipWidth / 4, SHIP_HEIGHT - 6);
     ctx.strokeStyle = '#94a3b8';
     ctx.strokeRect(-shipWidth / 2 + 4, -SHIP_HEIGHT / 2 + 3, shipWidth / 4, SHIP_HEIGHT - 6);
 
-    // Funnel (Chimney)
     ctx.fillStyle = '#ef4444';
     ctx.fillRect(-shipWidth / 2 + 6, -2, 4, 4);
 
-    // Tanks / Pipes on deck
     ctx.fillStyle = '#334155';
     const tankCount = Math.floor(shipWidth / 12);
     const tankSpacing = (shipWidth * 0.6) / tankCount;
@@ -575,14 +508,10 @@ export default function App() {
       ctx.fillRect(tx, -SHIP_HEIGHT / 3, tankSpacing - 4, (SHIP_HEIGHT / 3) * 2);
     }
 
-    // Bow Thruster Indicators
     if (Math.abs(ship.bowThruster) > 0.05) {
       const power = Math.abs(ship.bowThruster);
       const side = ship.bowThruster > 0 ? 1 : -1;
       
-      // Interpolate color: light blue (#93c5fd) to bright red (#ef4444)
-      // Light blue: r:147, g:197, b:253
-      // Bright red: r:239, g:68, b:68
       const r = Math.round(147 + (239 - 147) * power);
       const g = Math.round(197 + (68 - 197) * power);
       const b = Math.round(253 + (68 - 253) * power);
@@ -594,13 +523,12 @@ export default function App() {
       const tipY = side * (SHIP_HEIGHT / 2 + arrowLength);
       
       ctx.beginPath();
-      ctx.moveTo(shipWidth / 2, tipY); // Tip pointing outwards
-      ctx.lineTo(shipWidth / 2 + arrowWidth, baseY); // Base corner 1
-      ctx.lineTo(shipWidth / 2 - arrowWidth, baseY); // Base corner 2
+      ctx.moveTo(shipWidth / 2, tipY);
+      ctx.lineTo(shipWidth / 2 + arrowWidth, baseY);
+      ctx.lineTo(shipWidth / 2 - arrowWidth, baseY);
       ctx.closePath();
       ctx.fill();
       
-      // Optional: add a small glow
       ctx.shadowBlur = 5;
       ctx.shadowColor = `rgba(${r}, ${g}, ${b}, 0.5)`;
       ctx.stroke();
@@ -609,7 +537,6 @@ export default function App() {
 
     ctx.restore();
 
-    // Draw HUD
     if (gameState === 'playing') {
       const speed = (Math.hypot(ship.velocity.x, ship.velocity.y) * 0.5).toFixed(1);
       const rudderDir = ship.rudder > 0 ? 'STBD' : ship.rudder < 0 ? 'PORT' : 'MID';
@@ -619,23 +546,20 @@ export default function App() {
       const draft = (6 + (ship.cargo / 100) * 19).toFixed(1);
       const currentDepth = getDepthAt(ship.pos, world.shallowZones).toFixed(1);
 
-      // Reward Calculation
       const initialReward = (ship.cargo / 100) * 100000;
       const elapsedTime = (Date.now() - ship.startTime) / 1000;
       const timeFactor = Math.max(0, 1 - elapsedTime / 300);
-      const fuelCost = (100 - ship.fuel) * 100; // 100€ per 1% fuel
+      const fuelCost = (100 - ship.fuel) * 100;
       const currentReward = Math.max(0, initialReward * timeFactor - fuelCost);
 
       ctx.fillStyle = 'white';
       ctx.font = '12px "JetBrains Mono"';
       
-      // Top HUD
       ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
       ctx.fillRect(15, 15, 220, 80);
       ctx.fillStyle = 'white';
       ctx.fillText(`TIME: ${Math.floor(elapsedTime / 60)}:${(elapsedTime % 60).toFixed(0).padStart(2, '0')}`, 25, 35);
       
-      // Fuel Bar
       ctx.fillText(`FUEL:`, 25, 55);
       ctx.fillStyle = ship.fuel < 20 ? '#ef4444' : '#22c55e';
       ctx.fillRect(70, 45, ship.fuel * 1.5, 12);
@@ -664,18 +588,14 @@ export default function App() {
       ctx.fillText(`DRAFT: ${draft} m`, 20, canvas.height - 45);
       ctx.fillText(`DEPTH: ${currentDepth} m`, 20, canvas.height - 30);
 
-      // Wind Indicator
       const windX = canvas.width - 80;
       const windY = canvas.height - 80;
       
-      // Draw Forecast (10s ahead)
-      // Simplified forecast calculation based on current targets
       const forecastDt = 10;
       const dirDiff = Math.atan2(Math.sin(wind.targetDirection - wind.direction), Math.cos(wind.targetDirection - wind.direction));
       const forecastDir = wind.direction + dirDiff * forecastDt * 0.1;
       const forecastStrength = wind.strength + (wind.targetStrength - wind.strength) * forecastDt * 0.1;
 
-      // Forecast arrow (faded)
       ctx.save();
       ctx.translate(windX, windY);
       ctx.rotate(forecastDir);
@@ -690,7 +610,6 @@ export default function App() {
       ctx.stroke();
       ctx.restore();
 
-      // Current wind arrow
       ctx.save();
       ctx.translate(windX, windY);
       ctx.rotate(wind.direction);
@@ -717,7 +636,7 @@ export default function App() {
   }, [world, ship, gameState]);
 
   const animate = useCallback((time: number) => {
-    const dt = 1 / 60; // Fixed timestep for simplicity
+    const dt = 1 / 60;
     updatePhysics(dt);
     draw();
     requestRef.current = requestAnimationFrame(animate);
@@ -862,7 +781,6 @@ export default function App() {
         )}
       </AnimatePresence>
 
-      {/* Controls Overlay */}
       <div className="absolute top-6 right-6 flex flex-col gap-4 items-end pointer-events-none">
         <div className="bg-black/40 backdrop-blur-md p-4 border border-white/5 rounded-xl font-mono text-[10px] text-gray-400 space-y-2">
           <div className="flex justify-between gap-8">
